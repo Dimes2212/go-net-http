@@ -1,0 +1,14 @@
+# Go build and test artifacts
+bin/
+*.test
+*.out
+
+# Local environment and editor files
+.env
+.idea/
+.vscode/
+.DS_Store
+
+# Runtime data
+cookies.txt
+data/attachments/

@@ -1,0 +1,26 @@
+[
+ {
+  "id": 1,
+  "username": "dima",
+  "password_hash": "$2a$10$...",
+  "is_admin": false
+ },
+ {
+  "id": 2,
+  "username": "test-user",
+  "password_hash": "$2a$10$4WqebGqo/wFTNQBNB6kdpeqKROxCtBnAY05VpdAw9Ecq8PY2hLiDS",
+  "is_admin": false
+ },
+ {
+  "id": 3,
+  "username": "attachment-user-1792244575",
+  "password_hash": "$2a$10$JJfqCW0Hf8EMt6jqy3ChWOJbHJHPQgmWWnE2nyZqXeUwFp6o5hVxK",
+  "is_admin": false
+ },
+ {
+  "id": 4,
+  "username": "attachment-user-1792316075",
+  "password_hash": "$2a$10$UpPt8Bsm95ZqdUkWpKhFC.rWY3W2tNKKuXxElf/OGmAg5/kt/tnla",
+  "is_admin": false
+ }
+]
