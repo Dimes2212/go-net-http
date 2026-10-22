@@ -1,30 +1,35 @@
 package auth
 
 import (
-	"encoding/json"
 	"errors"
-	"go-net-http/internal/user"
-	"log"
 	"net/http"
 	"time"
+
+	"go-net-http/internal/user"
+
+	"github.com/gin-gonic/gin"
 )
 
 type Handler struct {
 	service *Service
 }
+
 type RegisterRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
+
 type RegisterResponse struct {
 	ID       int64  `json:"id"`
 	Username string `json:"username"`
 	IsAdmin  bool   `json:"is_admin"`
 }
+
 type LoggingInRequest struct {
 	Username string `json:"username"`
 	Password string `json:"password"`
 }
+
 type LoggingInResponse struct {
 	ID       int64  `json:"id"`
 	Username string `json:"username"`
@@ -32,110 +37,83 @@ type LoggingInResponse struct {
 }
 
 func NewHandler(service *Service) *Handler {
-	return &Handler{
-		service: service,
-	}
+	return &Handler{service: service}
 }
 
-func (h *Handler) Registration(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) Registration(c *gin.Context) {
 	var request RegisterRequest
 
-	err := json.NewDecoder(r.Body).Decode(&request)
-	if err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
 
 	createdUser, err := h.service.Register(request.Username, request.Password)
-	if errors.Is(err, user.ErrUsernameTaken) {
-		http.Error(
-			w,
-			"username already taken",
-			http.StatusConflict,
-		)
+	switch {
+	case errors.Is(err, user.ErrUsernameTaken):
+		c.JSON(http.StatusConflict, gin.H{"error": "username already taken"})
+		return
+	case errors.Is(err, ErrInvalidUsername), errors.Is(err, ErrPasswordTooShort):
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid username or password"})
+		return
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create user"})
 		return
 	}
-	if errors.Is(err, ErrInvalidUsername) || errors.Is(err, ErrPasswordTooShort) {
-		http.Error(w, "invalid username or password", http.StatusBadRequest)
-		return
-	}
-	if err != nil {
-		http.Error(w, "failed to create user", http.StatusInternalServerError)
-		return
-	}
-	response := RegisterResponse{
+
+	c.JSON(http.StatusCreated, RegisterResponse{
 		ID:       createdUser.ID,
 		Username: createdUser.Username,
 		IsAdmin:  createdUser.IsAdmin,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("encode register response: %v", err)
-	}
+	})
 }
 
-func (h *Handler) LoggingIn(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) LoggingIn(c *gin.Context) {
 	var request LoggingInRequest
 
-	err := json.NewDecoder(r.Body).Decode(&request)
-	if err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
 
 	result, err := h.service.Login(request.Username, request.Password)
-	if errors.Is(err, ErrInvalidCredentials) {
-		http.Error(w, "invalid username or password", http.StatusUnauthorized)
+	switch {
+	case errors.Is(err, ErrInvalidCredentials):
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid username or password"})
+		return
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to login"})
 		return
 	}
-	if err != nil {
-		http.Error(w, "failed to login", http.StatusInternalServerError)
-		return
-	}
-	response := LoggingInResponse{
+
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie(
+		"session_id",
+		result.SessionID,
+		int(time.Until(result.ExpiresAt).Seconds()),
+		"/",
+		"",
+		c.Request.TLS != nil,
+		true,
+	)
+
+	c.JSON(http.StatusOK, LoggingInResponse{
 		ID:       result.User.ID,
 		Username: result.User.Username,
 		IsAdmin:  result.User.IsAdmin,
-	}
-
-	http.SetCookie(w, &http.Cookie{
-		Name:     "session_id",
-		Value:    result.SessionID,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   r.TLS != nil,
-		SameSite: http.SameSiteLaxMode,
-		Expires:  result.ExpiresAt,
-		MaxAge:   int(time.Until(result.ExpiresAt).Seconds()),
 	})
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("encode login response: %v", err)
-	}
 }
 
-func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("session_id")
+func (h *Handler) Logout(c *gin.Context) {
+	sessionID, err := c.Cookie("session_id")
 	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
 
-	h.service.Logout(cookie.Value)
+	h.service.Logout(sessionID)
 
-	http.SetCookie(w, &http.Cookie{
-		Name:     "session_id",
-		Value:    "",
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-		MaxAge:   -1,
-	})
-
-	w.WriteHeader(http.StatusNoContent)
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("session_id", "", -1, "/", "", c.Request.TLS != nil, true)
+	c.Status(http.StatusNoContent)
 }

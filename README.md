@@ -1,8 +1,8 @@
-# Go `net/http`: задачи, cookie-сессии и работа с файлами
+# Go Gin: задачи, cookie-сессии и работа с файлами
 
-Учебный REST API на стандартной библиотеке Go. Проект показывает базовую работу с `net/http`, маршрутизацией через `http.ServeMux`, middleware, контекстом запроса, cookie-сессиями, JSON-хранилищем и загрузкой файлов через `multipart/form-data`.
+Учебный REST API на Gin. Проект показывает маршрутизацию, middleware, `gin.Context`, cookie-сессии, JSON-хранилище и загрузку файлов через `multipart/form-data`.
 
-Ветка с текущей реализацией: `net-http-basics-and-file-handling`.
+Ветка с текущей реализацией: `gin-framework-migration`. Исходная реализация на стандартном `net/http` сохранена в ветке `net-http-basics-and-file-handling`.
 
 ## Что реализовано
 
@@ -25,8 +25,8 @@
 ## Стек
 
 - Go 1.26.5;
-- стандартная библиотека `net/http`;
-- `http.ServeMux` с method-based patterns;
+- Gin;
+- стандартный `http.Server`;
 - `golang.org/x/crypto/bcrypt`;
 - JSON-файлы вместо базы данных;
 - локальная файловая система для вложений.
@@ -38,7 +38,7 @@
 ```text
 HTTP request
     ↓
-ServeMux
+Gin Engine
     ↓
 Auth middleware
     ↓
@@ -49,11 +49,28 @@ Service
 Repository / FileStorage
 ```
 
-- `Handler` разбирает HTTP-запрос и формирует HTTP-ответ.
+- `Handler` использует `*gin.Context`, разбирает HTTP-запрос и формирует JSON-ответ.
 - `Service` содержит правила приложения и связывает разные хранилища.
 - `Repository` читает и записывает JSON.
 - `FileStorage` сохраняет и открывает файлы на диске.
-- `RequireAuth` проверяет cookie и передаёт `userID` через `context.Context`.
+- `RequireAuth` проверяет cookie и сохраняет `userID` через `c.Set`.
+
+### Что изменилось относительно `net/http`
+
+| Задача | Базовый `net/http` | Gin |
+|---|---|---|
+| Регистрация маршрута | `mux.HandleFunc("POST /tasks", handler)` | `router.POST("/tasks", handler)` |
+| Handler | `func(w http.ResponseWriter, r *http.Request)` | `func(c *gin.Context)` |
+| Чтение JSON | `json.NewDecoder(r.Body).Decode(&value)` | `c.ShouldBindJSON(&value)` |
+| JSON-ответ | заголовки, статус и `json.Encoder` вручную | `c.JSON(status, value)` |
+| Path-параметр | `r.PathValue("id")` | `c.Param("id")` |
+| Query-параметр | `r.URL.Query().Get("done")` | `c.Query("done")` |
+| Middleware | обёртка `func(http.Handler) http.Handler` | `gin.HandlerFunc` и `c.Next()` |
+| Остановка middleware | `return` без вызова `next` | `c.AbortWithStatusJSON(...)` |
+| Данные запроса | `context.WithValue` | `c.Set` и `c.Get` |
+| Группа защищённых маршрутов | каждый маршрут оборачивается отдельно | `router.Group` и `Use` |
+
+Сервисы, репозитории, модели, JSON-хранилище и `FileStorage` при миграции не изменились. Gin заменил только транспортный HTTP-слой. Для скачивания по-прежнему используется `http.ServeContent`, потому что он предоставляет готовую поддержку range-запросов и HTTP-кеширования.
 
 ## Структура проекта
 
@@ -404,29 +421,3 @@ data/attachments/3/.upload-12345
 | `409` | Username занят или у задачи уже есть вложение |
 | `413` | Файл превышает лимит 10 МБ |
 | `500` | Внутренняя ошибка чтения или записи |
-
-## Важные ограничения
-
-Это учебный проект, а не готовый production-сервис:
-
-- сессии хранятся в памяти и пропадают после перезапуска сервера;
-- пользователи и задачи хранятся в JSON вместо базы данных;
-- поддерживается только одно вложение на задачу;
-- замена и удаление вложения через HTTP не реализованы;
-- типы загружаемых файлов не ограничены;
-- graceful shutdown пока отсутствует;
-- автоматические тесты пока не написаны;
-- глобальный mutex последовательно обрабатывает загрузки вложений;
-- приложение рассчитано на один запущенный экземпляр.
-
-После каждого перезапуска сервера необходимо снова выполнить `/login`, даже если cookie-файл сохранился: сервер уже не знает старый идентификатор сессии.
-
-## Следующие учебные шаги
-
-- worker pool на горутинах и каналах;
-- фоновое вычисление SHA-256 вложений;
-- graceful shutdown;
-- тесты через `httptest`;
-- удаление и замена вложений;
-- переход с `http.ServeMux` на `chi`;
-- замена JSON-хранилища на базу данных.

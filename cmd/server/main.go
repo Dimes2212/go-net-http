@@ -9,17 +9,19 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 var Version = "1.0.0"
 
 func main() {
-
-	mux := http.NewServeMux()
+	router := gin.Default()
+	router.MaxMultipartMemory = 1 << 20
 
 	server := &http.Server{
 		Addr:              ":8080",
-		Handler:           mux,
+		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
@@ -45,7 +47,7 @@ func main() {
 	authService := auth.NewService(userRepository)
 	authHandler := auth.NewHandler(authService)
 
-	appserver.RegisterRoutes(mux, authHandler, authService, taskHandler)
+	appserver.RegisterRoutes(router, authHandler, authService, taskHandler)
 
 	log.Printf("server started on http://localhost:8080")
 

@@ -1,23 +1,27 @@
 package task
 
 import (
-	"encoding/json"
 	"errors"
-	"go-net-http/internal/auth"
 	"io"
 	"log"
 	"mime"
 	"net/http"
 	"strconv"
+
+	"go-net-http/internal/auth"
+
+	"github.com/gin-gonic/gin"
 )
 
 type Handler struct {
 	service *Service
 }
+
 type createTaskRequest struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 }
+
 type createTaskResponse struct {
 	ID          int64  `json:"id"`
 	UserID      int64  `json:"user_id"`
@@ -27,213 +31,185 @@ type createTaskResponse struct {
 }
 
 func NewHandler(service *Service) *Handler {
-	return &Handler{
-		service: service,
-	}
+	return &Handler{service: service}
 }
 
-func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
-	var request createTaskRequest
-
-	err := json.NewDecoder(r.Body).Decode(&request)
-	if err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-	userID, ok := auth.UserIDFromContext(r.Context())
+func (h *Handler) CreateTask(c *gin.Context) {
+	userID, ok := authenticatedUserID(c)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
+
+	var request createTaskRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
 	createdTask, err := h.service.Create(userID, request.Title, request.Description)
-	if errors.Is(err, ErrEmptyTitle) {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	switch {
+	case errors.Is(err, ErrEmptyTitle):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create task"})
 		return
 	}
-	if err != nil {
-		http.Error(w, "failed to create task", http.StatusInternalServerError)
-		return
-	}
-	response := createTaskResponse{
+
+	c.JSON(http.StatusCreated, createTaskResponse{
 		ID:          createdTask.ID,
-		UserID:      userID,
+		UserID:      createdTask.UserID,
 		Title:       createdTask.Title,
 		Description: createdTask.Description,
 		Done:        createdTask.Done,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		log.Printf("encode create task response: %v", err)
-	}
+	})
 }
 
-func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
-	userID, ok := auth.UserIDFromContext(r.Context())
+func (h *Handler) ListTasks(c *gin.Context) {
+	userID, ok := authenticatedUserID(c)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	var done *bool
-
-	switch r.URL.Query().Get("done") {
+	switch c.Query("done") {
 	case "":
-
 	case "true":
 		value := true
 		done = &value
-
 	case "false":
 		value := false
 		done = &value
-
 	default:
-		http.Error(w, "done must be true or false", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "done must be true or false"})
 		return
 	}
 
 	tasks, err := h.service.List(userID, done)
 	if err != nil {
-		http.Error(w, "failed to get tasks", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get tasks"})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-
-	if err := json.NewEncoder(w).Encode(tasks); err != nil {
-		log.Printf("encode tasks response: %v", err)
-	}
+	c.JSON(http.StatusOK, tasks)
 }
 
-func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
-	userId, ok := auth.UserIDFromContext(r.Context())
+func (h *Handler) GetTask(c *gin.Context) {
+	userID, ok := authenticatedUserID(c)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	taskID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil || taskID <= 0 {
-		http.Error(w, "invalid task ID", http.StatusBadRequest)
+	taskID, ok := taskIDFromPath(c)
+	if !ok {
 		return
 	}
 
-	foundTask, err := h.service.Get(userId, taskID)
-	if errors.Is(err, ErrTaskNotFound) {
-		http.Error(w, "task not found", http.StatusNotFound)
+	foundTask, err := h.service.Get(userID, taskID)
+	switch {
+	case errors.Is(err, ErrTaskNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
 		return
-	}
-	if err != nil {
-		http.Error(w, "failed to get task", http.StatusInternalServerError)
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get task"})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(foundTask); err != nil {
-		log.Printf("encode task response: %v", err)
-	}
+	c.JSON(http.StatusOK, foundTask)
 }
 
-func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
-	userId, ok := auth.UserIDFromContext(r.Context())
+func (h *Handler) UpdateTask(c *gin.Context) {
+	userID, ok := authenticatedUserID(c)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	taskID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil || taskID <= 0 {
-		http.Error(w, "invalid task ID", http.StatusBadRequest)
+	taskID, ok := taskIDFromPath(c)
+	if !ok {
 		return
 	}
 
 	var input UpdateInput
-
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
 
-	updatedTask, err := h.service.Update(userId, taskID, input)
-	if errors.Is(err, ErrEmptyTitle) || errors.Is(err, ErrNoUpdateFields) {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	updatedTask, err := h.service.Update(userID, taskID, input)
+	switch {
+	case errors.Is(err, ErrEmptyTitle), errors.Is(err, ErrNoUpdateFields):
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
-	}
-	if errors.Is(err, ErrTaskNotFound) {
-		http.Error(w, "task not found", http.StatusNotFound)
+	case errors.Is(err, ErrTaskNotFound):
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	case err != nil:
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update task"})
 		return
 	}
 
-	if err != nil {
-		http.Error(w, "failed to update tasks", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-
-	if err := json.NewEncoder(w).Encode(updatedTask); err != nil {
-		log.Printf("encode updated task response: %v", err)
-	}
+	c.JSON(http.StatusOK, updatedTask)
 }
 
-func (h *Handler) UploadAttachment(w http.ResponseWriter, r *http.Request) {
-	userID, ok := auth.UserIDFromContext(r.Context())
+func (h *Handler) UploadAttachment(c *gin.Context) {
+	userID, ok := authenticatedUserID(c)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	taskID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil || taskID <= 0 {
-		http.Error(w, "invalid task ID", http.StatusBadRequest)
+	taskID, ok := taskIDFromPath(c)
+	if !ok {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, MaxAttachmentSize+(1<<20))
+	c.Request.Body = http.MaxBytesReader(
+		c.Writer,
+		c.Request.Body,
+		MaxAttachmentSize+(1<<20),
+	)
 
-	if err := r.ParseMultipartForm(1 << 20); err != nil {
-		var MaxBytesError *http.MaxBytesError
-
-		if errors.As(err, &MaxBytesError) {
-			http.Error(w, "attachment is too large", http.StatusRequestEntityTooLarge)
+	if err := c.Request.ParseMultipartForm(1 << 20); err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "attachment is too large"})
 			return
 		}
 
-		http.Error(w, "invalid multipart form", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid multipart form"})
 		return
 	}
 
-	if r.MultipartForm != nil {
+	if c.Request.MultipartForm != nil {
 		defer func() {
-			if err := r.MultipartForm.RemoveAll(); err != nil {
+			if err := c.Request.MultipartForm.RemoveAll(); err != nil {
 				log.Printf("remove temporary multipart files: %v", err)
 			}
 		}()
 	}
 
-	file, header, err := r.FormFile("file")
+	header, err := c.FormFile("file")
 	if err != nil {
-		http.Error(w, "file field is required", http.StatusBadRequest)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file field is required"})
 		return
 	}
 
+	file, err := header.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to open attachment"})
+		return
+	}
 	defer file.Close()
 
 	buffer := make([]byte, 512)
-
 	readBytes, err := file.Read(buffer)
 	if err != nil && !errors.Is(err, io.EOF) {
-		http.Error(w, "failed to read attachment", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read attachment"})
 		return
 	}
 
 	contentType := http.DetectContentType(buffer[:readBytes])
-
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		http.Error(w, "failed to read attachment", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read attachment"})
 		return
 	}
 
@@ -244,79 +220,86 @@ func (h *Handler) UploadAttachment(w http.ResponseWriter, r *http.Request) {
 		contentType,
 		file,
 	)
-
 	switch {
 	case errors.Is(err, ErrTaskNotFound):
-		http.Error(w, "task not found", http.StatusNotFound)
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
 		return
-
 	case errors.Is(err, ErrAttachmentExists):
-		http.Error(w, "attachment already exists", http.StatusConflict)
+		c.JSON(http.StatusConflict, gin.H{"error": "attachment already exists"})
 		return
-
 	case errors.Is(err, ErrAttachmentTooLarge):
-		http.Error(w, "attachment is too large", http.StatusRequestEntityTooLarge)
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "attachment is too large"})
 		return
-
 	case err != nil:
-		http.Error(w, "failed to save attachment", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save attachment"})
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(attachment); err != nil {
-		log.Printf("encode attachment response: %v", err)
-	}
-
+	c.JSON(http.StatusCreated, attachment)
 }
 
-func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
-	userID, ok := auth.UserIDFromContext(r.Context())
+func (h *Handler) DownloadAttachment(c *gin.Context) {
+	userID, ok := authenticatedUserID(c)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
-	taskID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil || taskID <= 0 {
-		http.Error(w, "invalid task ID", http.StatusBadRequest)
+	taskID, ok := taskIDFromPath(c)
+	if !ok {
 		return
 	}
 
 	file, attachment, err := h.service.OpenAttachment(userID, taskID)
-
 	switch {
 	case errors.Is(err, ErrTaskNotFound):
-		http.Error(w, "task not found", http.StatusNotFound)
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
 		return
-
 	case errors.Is(err, ErrAttachmentNotFound):
-		http.Error(w, "attachment not found", http.StatusNotFound)
+		c.JSON(http.StatusNotFound, gin.H{"error": "attachment not found"})
 		return
-
 	case err != nil:
-		http.Error(w, "failed to open attachment", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to open attachment"})
 		return
 	}
-
 	defer file.Close()
 
-	fileInfo, err := file.Stat() //получение метаданных файла
+	fileInfo, err := file.Stat()
 	if err != nil {
-		http.Error(w, "failed to read attachment", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read attachment"})
 		return
 	}
 
-	contentDisposition := mime.FormatMediaType("attachment", map[string]string{"filename": attachment.Name}) //безопасное экраниование пробелов и тп
-	w.Header().Set("Content-Type", attachment.ContentType)
-	w.Header().Set("Content-Disposition", contentDisposition)
+	c.Header("Content-Type", attachment.ContentType)
+	c.Header("Content-Disposition", mime.FormatMediaType(
+		"attachment",
+		map[string]string{"filename": attachment.Name},
+	))
 
 	http.ServeContent(
-		w,
-		r,
+		c.Writer,
+		c.Request,
 		attachment.Name,
 		fileInfo.ModTime(),
 		file,
 	)
+}
+
+func authenticatedUserID(c *gin.Context) (int64, bool) {
+	userID, ok := auth.UserIDFromContext(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return 0, false
+	}
+
+	return userID, true
+}
+
+func taskIDFromPath(c *gin.Context) (int64, bool) {
+	taskID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || taskID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid task ID"})
+		return 0, false
+	}
+
+	return taskID, true
 }

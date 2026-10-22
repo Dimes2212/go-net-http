@@ -3,60 +3,28 @@ package server
 import (
 	"go-net-http/internal/auth"
 	"go-net-http/internal/task"
-	"net/http"
+
+	"github.com/gin-gonic/gin"
 )
 
-func RegisterRoutes(mux *http.ServeMux, authHandler *auth.Handler, authService *auth.Service, taskHandler *task.Handler) {
-	mux.HandleFunc("GET /health", healthHandler)
-	mux.HandleFunc("POST /register", authHandler.Registration)
-	mux.HandleFunc("POST /login", authHandler.LoggingIn)
+func RegisterRoutes(
+	router *gin.Engine,
+	authHandler *auth.Handler,
+	authService *auth.Service,
+	taskHandler *task.Handler,
+) {
+	router.GET("/health", healthHandler)
+	router.POST("/register", authHandler.Registration)
+	router.POST("/login", authHandler.LoggingIn)
 
-	mux.Handle(
-		"POST /logout",
-		authService.RequireAuth(
-			http.HandlerFunc(authHandler.Logout),
-		),
-	)
+	protected := router.Group("")
+	protected.Use(authService.RequireAuth())
 
-	mux.Handle(
-		"POST /tasks",
-		authService.RequireAuth(
-			http.HandlerFunc(taskHandler.CreateTask),
-		),
-	)
-
-	mux.Handle(
-		"GET /tasks",
-		authService.RequireAuth(
-			http.HandlerFunc(taskHandler.ListTasks),
-		),
-	)
-
-	mux.Handle(
-		"GET /tasks/{id}",
-		authService.RequireAuth(
-			http.HandlerFunc(taskHandler.GetTask),
-		),
-	)
-
-	mux.Handle(
-		"PATCH /tasks/{id}",
-		authService.RequireAuth(
-			http.HandlerFunc(taskHandler.UpdateTask),
-		),
-	)
-
-	mux.Handle(
-		"POST /tasks/{id}/attachment",
-		authService.RequireAuth(
-			http.HandlerFunc(taskHandler.UploadAttachment),
-		),
-	)
-
-	mux.Handle(
-		"GET /tasks/{id}/attachment",
-		authService.RequireAuth(
-			http.HandlerFunc(taskHandler.DownloadAttachment),
-		),
-	)
+	protected.POST("/logout", authHandler.Logout)
+	protected.POST("/tasks", taskHandler.CreateTask)
+	protected.GET("/tasks", taskHandler.ListTasks)
+	protected.GET("/tasks/:id", taskHandler.GetTask)
+	protected.PATCH("/tasks/:id", taskHandler.UpdateTask)
+	protected.POST("/tasks/:id/attachment", taskHandler.UploadAttachment)
+	protected.GET("/tasks/:id/attachment", taskHandler.DownloadAttachment)
 }
