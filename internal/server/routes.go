@@ -3,60 +3,29 @@ package server
 import (
 	"go-net-http/internal/auth"
 	"go-net-http/internal/task"
-	"net/http"
+
+	"github.com/go-chi/chi/v5"
 )
 
-func RegisterRoutes(mux *http.ServeMux, authHandler *auth.Handler, authService *auth.Service, taskHandler *task.Handler) {
-	mux.HandleFunc("GET /health", healthHandler)
-	mux.HandleFunc("POST /register", authHandler.Registration)
-	mux.HandleFunc("POST /login", authHandler.LoggingIn)
+func RegisterRoutes(
+	router chi.Router,
+	authHandler *auth.Handler,
+	authService *auth.Service,
+	taskHandler *task.Handler,
+) {
+	router.Get("/health", healthHandler)
+	router.Post("/register", authHandler.Registration)
+	router.Post("/login", authHandler.LoggingIn)
 
-	mux.Handle(
-		"POST /logout",
-		authService.RequireAuth(
-			http.HandlerFunc(authHandler.Logout),
-		),
-	)
+	router.Group(func(protected chi.Router) {
+		protected.Use(authService.RequireAuth)
 
-	mux.Handle(
-		"POST /tasks",
-		authService.RequireAuth(
-			http.HandlerFunc(taskHandler.CreateTask),
-		),
-	)
-
-	mux.Handle(
-		"GET /tasks",
-		authService.RequireAuth(
-			http.HandlerFunc(taskHandler.ListTasks),
-		),
-	)
-
-	mux.Handle(
-		"GET /tasks/{id}",
-		authService.RequireAuth(
-			http.HandlerFunc(taskHandler.GetTask),
-		),
-	)
-
-	mux.Handle(
-		"PATCH /tasks/{id}",
-		authService.RequireAuth(
-			http.HandlerFunc(taskHandler.UpdateTask),
-		),
-	)
-
-	mux.Handle(
-		"POST /tasks/{id}/attachment",
-		authService.RequireAuth(
-			http.HandlerFunc(taskHandler.UploadAttachment),
-		),
-	)
-
-	mux.Handle(
-		"GET /tasks/{id}/attachment",
-		authService.RequireAuth(
-			http.HandlerFunc(taskHandler.DownloadAttachment),
-		),
-	)
+		protected.Post("/logout", authHandler.Logout)
+		protected.Post("/tasks", taskHandler.CreateTask)
+		protected.Get("/tasks", taskHandler.ListTasks)
+		protected.Get("/tasks/{id}", taskHandler.GetTask)
+		protected.Patch("/tasks/{id}", taskHandler.UpdateTask)
+		protected.Post("/tasks/{id}/attachment", taskHandler.UploadAttachment)
+		protected.Get("/tasks/{id}/attachment", taskHandler.DownloadAttachment)
+	})
 }

@@ -9,6 +9,8 @@ import (
 	"mime"
 	"net/http"
 	"strconv"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type Handler struct {
@@ -115,7 +117,7 @@ func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	taskID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	taskID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil || taskID <= 0 {
 		http.Error(w, "invalid task ID", http.StatusBadRequest)
 		return
@@ -144,7 +146,7 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	taskID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	taskID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil || taskID <= 0 {
 		http.Error(w, "invalid task ID", http.StatusBadRequest)
 		return
@@ -186,7 +188,7 @@ func (h *Handler) UploadAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	taskID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	taskID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil || taskID <= 0 {
 		http.Error(w, "invalid task ID", http.StatusBadRequest)
 		return
@@ -278,7 +280,7 @@ func (h *Handler) DownloadAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	taskID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	taskID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil || taskID <= 0 {
 		http.Error(w, "invalid task ID", http.StatusBadRequest)
 		return

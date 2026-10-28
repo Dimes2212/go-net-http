@@ -1,8 +1,8 @@
-# Go `net/http`: задачи, cookie-сессии и работа с файлами
+# Go chi: задачи, cookie-сессии и работа с файлами
 
-Учебный REST API на стандартной библиотеке Go. Проект показывает базовую работу с `net/http`, маршрутизацией через `http.ServeMux`, middleware, контекстом запроса, cookie-сессиями, JSON-хранилищем и загрузкой файлов через `multipart/form-data`.
+Учебный REST API на стандартном `net/http` с роутером chi. Проект показывает группировку маршрутов, middleware, контекст запроса, cookie-сессии, JSON-хранилище и загрузку файлов через `multipart/form-data`.
 
-Ветка с текущей реализацией: `net-http-basics-and-file-handling`.
+Ветка с текущей реализацией: `chi-router-migration`. Исходная реализация на `http.ServeMux` сохранена в ветке `net-http-basics-and-file-handling`.
 
 ## Что реализовано
 
@@ -26,7 +26,8 @@
 
 - Go 1.26.5;
 - стандартная библиотека `net/http`;
-- `http.ServeMux` с method-based patterns;
+- `github.com/go-chi/chi/v5`;
+- стандартные chi middleware для request ID, логирования и recovery;
 - `golang.org/x/crypto/bcrypt`;
 - JSON-файлы вместо базы данных;
 - локальная файловая система для вложений.
@@ -38,7 +39,7 @@
 ```text
 HTTP request
     ↓
-ServeMux
+chi Router
     ↓
 Auth middleware
     ↓
@@ -54,6 +55,27 @@ Repository / FileStorage
 - `Repository` читает и записывает JSON.
 - `FileStorage` сохраняет и открывает файлы на диске.
 - `RequireAuth` проверяет cookie и передаёт `userID` через `context.Context`.
+
+### Что изменилось относительно `http.ServeMux`
+
+| Задача | Базовый `http.ServeMux` | chi |
+|---|---|---|
+| Создание роутера | `http.NewServeMux()` | `chi.NewRouter()` |
+| Регистрация маршрута | `mux.HandleFunc("GET /tasks", handler)` | `router.Get("/tasks", handler)` |
+| Path-параметр | `r.PathValue("id")` | `chi.URLParam(r, "id")` |
+| Общие middleware | ручная обёртка handler | `router.Use(middleware)` |
+| Защищённые маршруты | каждый маршрут оборачивается отдельно | `router.Group` и `protected.Use` |
+| Request ID | собственная реализация | `middleware.RequestID` |
+| Логирование | собственная реализация | `middleware.Logger` |
+| Panic recovery | собственная реализация | `middleware.Recoverer` |
+
+В отличие от Gin, chi не вводит собственный HTTP-контекст. Handler’ы по-прежнему имеют стандартную сигнатуру:
+
+```go
+func(w http.ResponseWriter, r *http.Request)
+```
+
+Сервисы, репозитории, auth middleware, модели, JSON-хранилище и файловый слой при миграции не изменились. Chi заменил только `http.ServeMux` и упростил композицию маршрутов.
 
 ## Структура проекта
 
@@ -428,5 +450,5 @@ data/attachments/3/.upload-12345
 - graceful shutdown;
 - тесты через `httptest`;
 - удаление и замена вложений;
-- переход с `http.ServeMux` на `chi`;
+- сравнение chi-реализации с отдельной веткой на Gin;
 - замена JSON-хранилища на базу данных.
